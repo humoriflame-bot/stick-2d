@@ -1,0 +1,74 @@
+name: A4J Final Renders R6
+
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: 'job family (sf, hh, fx, sk, rg)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - id: p
+        run: |
+          case "${{ inputs.family }}" in
+            sf) echo 'shards=[0,1,2,3]' >> "$GITHUB_OUTPUT" ;;
+            fx) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            sk) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            hh) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+            rg) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  render:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - name: Clone private repo (payload)
+        env:
+          PRIVATETOKEN: ${{ secrets.PRIVATETOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${PRIVATETOKEN}@github.com/humoriflame-bot/stick-animation.git" payload
+      - name: Unpack studio
+        run: |
+          mkdir studio
+          tar -xzf payload/e3a4j/studio-r6.tar.gz -C studio
+          cp payload/e3a4j/jobs9.json studio/jobs9.json
+          ls studio | head
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install deps
+        working-directory: studio
+        run: npm ci --no-audit --no-fund
+      - name: Render shard
+        working-directory: studio
+        run: node src/a4jimpl5/render-batch9.mjs --family "${{ inputs.family }}" --shard "${{ matrix.shard }}" --jobs jobs9.json --out out
+      - name: Push results to private repo branch
+        env:
+          PRIVATETOKEN: ${{ secrets.PRIVATETOKEN }}
+        run: |
+          cd payload
+          git config user.email "farm@local"
+          git config user.name "farm"
+          git checkout --orphan "a3r6/${{ inputs.family }}-${{ matrix.shard }}"
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p results
+          cp -r ../studio/out/. results/
+          git add results
+          git commit -m "a3r6 ${{ inputs.family }}-${{ matrix.shard }} results"
+          git push -f "https://x-access-token:${PRIVATETOKEN}@github.com/humoriflame-bot/stick-animation.git" "a3r6/${{ inputs.family }}-${{ matrix.shard }}"
