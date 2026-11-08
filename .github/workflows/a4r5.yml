@@ -1,0 +1,73 @@
+name: A4J F5 Lab Renders
+
+# Public shell: this repo holds ONLY this workflow. Each job clones the private
+# data repo into the runner's temp space, renders there, and pushes results
+# back to a per-shard branch in the private repo. Nothing private is stored here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: "job family (f5)"
+        required: true
+        type: string
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.make.outputs.shards }}
+    steps:
+      - id: make
+        run: |
+          case "${{ inputs.family }}" in
+            f5) echo 'shards=[0,1,2]' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  render:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - name: Clone private repo (data + payload)
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.PRIVATETOKEN }}@github.com/humoriflame-bot/stick-animation.git" priv
+          mkdir -p work
+          tar -xzf priv/e3a4j/studio-r5.tar.gz -C work
+          cp priv/e3a4j/jobs8.json work/studio/jobs8.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        working-directory: work/studio
+        run: npm ci --no-audit --no-fund
+      - name: Render shard
+        working-directory: work/studio
+        run: |
+          set +e
+          node src/a4jimpl4/render-batch8.mjs --family "${{ inputs.family }}" --shard ${{ matrix.shard }} --jobs jobs8.json --out out > batch.log 2>&1
+          echo "batch exit: $?"
+          tail -5 batch.log
+          exit 0
+      - name: Push results to private branch
+        if: always()
+        working-directory: priv
+        run: |
+          git config user.name "a4j-farm"
+          git config user.email "a4j-farm@localhost"
+          BR="a3r5/${{ inputs.family }}-${{ matrix.shard }}"
+          git checkout -B "$BR"
+          rm -rf results
+          mkdir -p results
+          cp -r ../work/studio/out/. results/ 2>/dev/null || true
+          cp ../work/studio/batch.log results/batch.log 2>/dev/null || true
+          ls results | wc -l
+          git add results
+          git commit -m "a4j f5 results ${{ inputs.family }} shard ${{ matrix.shard }}" || echo "nothing to commit"
+          git push origin "$BR" --force
