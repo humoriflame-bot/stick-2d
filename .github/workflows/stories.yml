@@ -1,0 +1,78 @@
+name: Stories50 Lab Renders
+
+# Public shell: this repo holds ONLY this workflow. Each job clones the private
+# data repo into the runner's temp space, renders there, and pushes results
+# back to a per-shard branch in the private repo. Nothing private is stored here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "batch id (jobs file e3stories/jobs-<batch>.json)"
+        required: true
+        type: string
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.make.outputs.shards }}
+    steps:
+      - id: make
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.PRIVATETOKEN }}@github.com/humoriflame-bot/stick-animation.git" priv
+          python3 -c "
+          import json
+          jobs = json.load(open('priv/e3stories/jobs-${{ inputs.batch }}.json'))
+          shards = sorted({j['shard'] for j in jobs})
+          print('shards=' + json.dumps(shards))
+          " >> "$GITHUB_OUTPUT"
+
+  render:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - name: Clone private repo (data + payload)
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.PRIVATETOKEN }}@github.com/humoriflame-bot/stick-animation.git" priv
+          mkdir -p work
+          tar -xzf priv/e3stories/studio-s50.tar.gz -C work
+          cp "priv/e3stories/jobs-${{ inputs.batch }}.json" work/studio/jobs-s50.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        working-directory: work/studio
+        run: npm ci --no-audit --no-fund
+      - name: Render shard
+        working-directory: work/studio
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set +e
+          node src/stories50/render-batch-s50.mjs --batch "${{ inputs.batch }}" --shard ${{ matrix.shard }} --jobs jobs-s50.json --out out > batch.log 2>&1
+          echo "batch exit: $?"
+          tail -5 batch.log
+          exit 0
+      - name: Push results to private branch
+        if: always()
+        working-directory: priv
+        run: |
+          git config user.name "stories-farm"
+          git config user.email "stories-farm@localhost"
+          BR="stories/${{ inputs.batch }}-${{ matrix.shard }}"
+          git checkout -B "$BR"
+          rm -rf results
+          mkdir -p results
+          cp -r ../work/studio/out/. results/ 2>/dev/null || true
+          cp ../work/studio/batch.log results/batch.log 2>/dev/null || true
+          ls results | wc -l
+          git add results
+          git commit -m "stories results ${{ inputs.batch }} shard ${{ matrix.shard }}" || echo "nothing to commit"
+          git push origin "$BR" --force
