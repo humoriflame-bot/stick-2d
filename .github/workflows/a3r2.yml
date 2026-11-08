@@ -1,0 +1,77 @@
+name: A3 Round 2 Renders
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: 'family (f4, f5, f6, f7, f8, f9, f10)'
+        required: true
+        default: 'f4'
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - id: plan
+        run: |
+          case "${{ inputs.family }}" in
+            f4) echo 'shards=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]' >> "$GITHUB_OUTPUT" ;;
+            f5) echo 'shards=[0,1,2,3,4,5,6,7,8,9,10,11]' >> "$GITHUB_OUTPUT" ;;
+            f6) echo 'shards=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]' >> "$GITHUB_OUTPUT" ;;
+            f7) echo 'shards=[0,1,2,3,4,5]' >> "$GITHUB_OUTPUT" ;;
+            f8) echo 'shards=[0,1,2,3,4,5]' >> "$GITHUB_OUTPUT" ;;
+            f9) echo 'shards=[0,1,2,3,4,5,6,7,8]' >> "$GITHUB_OUTPUT" ;;
+            f10) echo 'shards=[0,1,2,3]' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+          esac
+  render:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.shards) }}
+    steps:
+      - name: Clone private repo (data home)
+        env:
+          TOKEN: ${{ secrets.PRIVATETOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/humoriflame-bot/stick-animation.git" private-data
+          ls private-data/e3a3r2/
+      - name: Extract studio and set up
+        run: |
+          mkdir studio && tar -xzf private-data/e3a3r2/studio-r2.tar.gz -C studio
+          cp private-data/e3a3r2/jobs.json studio/jobs.json
+          ls studio/src/a3impl/ | head -20
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: studio
+        run: npm ci --no-audit --no-fund
+      - name: Render shard
+        working-directory: studio
+        run: |
+          set +e
+          node src/a3impl/render-batch.mjs --family "${{ inputs.family }}" --shard "${{ matrix.shard }}" --jobs jobs.json --out out > batch.log 2>&1
+          echo "batch exit: $?" >> batch.log
+          tail -20 batch.log
+      - name: Push results branch (always)
+        if: always()
+        env:
+          TOKEN: ${{ secrets.PRIVATETOKEN }}
+        run: |
+          cd private-data
+          git config user.email "farm@stick.local"
+          git config user.name "a3r2-farm"
+          BR="a3r2/${{ inputs.family }}-${{ matrix.shard }}"
+          git checkout -b "$BR"
+          mkdir -p results
+          cp -r ../studio/out/* results/ 2>/dev/null || true
+          cp ../studio/batch.log results/batch.log 2>/dev/null || true
+          echo "family=${{ inputs.family }} shard=${{ matrix.shard }} runner=$RUNNER_OS finished=$(date -u +%FT%TZ)" > results/STATUS.txt
+          git add results
+          git commit -m "a3r2 ${{ inputs.family }} shard ${{ matrix.shard }} results" || echo "nothing to commit"
+          git push origin "$BR"
