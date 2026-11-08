@@ -28,6 +28,7 @@ jobs:
             g5) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
             g6) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
             g7) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            f1) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
             *) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
           esac
 
@@ -48,6 +49,7 @@ jobs:
           tar -xzf priv/e3a4j/studio-r4.tar.gz -C work
           cp priv/e3a4j/jobs5.json work/studio/jobs5.json
           cp priv/e3a4j/jobs6.json work/studio/jobs6.json
+          cp priv/e3a4j/jobs7.json work/studio/jobs7.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -60,6 +62,7 @@ jobs:
           set +e
           case "${{ inputs.family }}" in
             h*) node src/a4jimpl2/render-batch6.mjs --family "${{ inputs.family }}" --shard ${{ matrix.shard }} --jobs jobs6.json --out out > batch.log 2>&1 ;;
+            f*) node src/a4jimpl3/render-batch7.mjs --family "${{ inputs.family }}" --shard ${{ matrix.shard }} --jobs jobs7.json --out out > batch.log 2>&1 ;;
             *) node src/a4jimpl/render-batch5.mjs --family "${{ inputs.family }}" --shard ${{ matrix.shard }} --jobs jobs5.json --out out > batch.log 2>&1 ;;
           esac
           echo "batch exit: $?"
