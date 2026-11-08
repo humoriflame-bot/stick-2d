@@ -1,0 +1,83 @@
+name: A4J Lab Renders
+
+# Public shell: this repo holds ONLY this workflow. Each job clones the private
+# data repo into the runner's temp space, renders there, and pushes results
+# back to a per-shard branch in the private repo. Nothing private is stored here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: "job family (g1..g7, h1, h2)"
+        required: true
+        type: string
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.make.outputs.shards }}
+    steps:
+      - id: make
+        run: |
+          case "${{ inputs.family }}" in
+            g1) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            g2) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            g3) echo 'shards=[0,1,2]' >> "$GITHUB_OUTPUT" ;;
+            g4) echo 'shards=[0,1,2,3]' >> "$GITHUB_OUTPUT" ;;
+            g5) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            g6) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+            g7) echo 'shards=[0,1]' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'shards=[0]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  render:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - name: Clone private repo (data + payload)
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.PRIVATETOKEN }}@github.com/humoriflame-bot/stick-animation.git" priv
+          mkdir -p work
+          tar -xzf priv/e3a4j/studio-r4.tar.gz -C work
+          cp priv/e3a4j/jobs5.json work/studio/jobs5.json
+          cp priv/e3a4j/jobs6.json work/studio/jobs6.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        working-directory: work/studio
+        run: npm ci --no-audit --no-fund
+      - name: Render shard
+        working-directory: work/studio
+        run: |
+          set +e
+          case "${{ inputs.family }}" in
+            h*) node src/a4jimpl2/render-batch6.mjs --family "${{ inputs.family }}" --shard ${{ matrix.shard }} --jobs jobs6.json --out out > batch.log 2>&1 ;;
+            *) node src/a4jimpl/render-batch5.mjs --family "${{ inputs.family }}" --shard ${{ matrix.shard }} --jobs jobs5.json --out out > batch.log 2>&1 ;;
+          esac
+          echo "batch exit: $?"
+          tail -5 batch.log
+          exit 0
+      - name: Push results to private branch
+        if: always()
+        working-directory: priv
+        run: |
+          git config user.name "a4j-farm"
+          git config user.email "a4j-farm@localhost"
+          BR="a3r4/${{ inputs.family }}-${{ matrix.shard }}"
+          git checkout -B "$BR"
+          rm -rf results
+          mkdir -p results
+          cp -r ../work/studio/out/. results/ 2>/dev/null || true
+          cp ../work/studio/batch.log results/batch.log 2>/dev/null || true
+          ls results | wc -l
+          git add results
+          git commit -m "a4j results ${{ inputs.family }} shard ${{ matrix.shard }}" || echo "nothing to commit"
+          git push origin "$BR" --force
