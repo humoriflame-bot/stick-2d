@@ -1,0 +1,25 @@
+name: Link Test
+on: workflow_dispatch
+jobs:
+  linktest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone private repo with secret
+        env:
+          TOKEN: ${{ secrets.PRIVATE_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/humoriflame-bot/stick-animation.git" private-data
+          echo "files cloned: $(find private-data -type f | wc -l)"
+      - name: Push test branch back to private
+        env:
+          TOKEN: ${{ secrets.PRIVATE_TOKEN }}
+        run: |
+          cd private-data
+          git config user.email "farm@test.local"
+          git config user.name "farm-link-test"
+          git checkout -b farm-link-test
+          echo "link test ok - public runner reached private and back" > LINK-TEST.md
+          git add LINK-TEST.md
+          git commit -m "farm link test"
+          git push origin farm-link-test
+          echo "pushed back OK"
