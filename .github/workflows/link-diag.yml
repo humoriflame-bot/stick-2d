@@ -1,0 +1,28 @@
+name: Link Diag
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diagnose secret and token reach (status codes only)
+        env:
+          TOKEN: ${{ secrets.PRIVATE_TOKEN }}
+        run: |
+          {
+            if [ -z "$TOKEN" ]; then echo "secret_present: NO"; else echo "secret_present: YES"; fi
+            code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/humoriflame-bot/stick-animation)
+            echo "api_private_repo_status: $code"
+            code2=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/humoriflame-bot/stick-animation/contents/.github/workflows/glm-smoke.yml")
+            echo "api_private_file_status: $code2"
+          } > diag-result.txt
+          cat diag-result.txt
+      - name: Save diagnosis to this repo
+        run: |
+          git config user.email "diag@test.local"
+          git config user.name "link-diag"
+          git add diag-result.txt
+          git commit -m "link diagnosis"
+          git push
