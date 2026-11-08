@@ -1,0 +1,12 @@
+name: Smoke Test
+on: workflow_dispatch
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hello
+        run: |
+          echo "Runner is working"
+          uname -a
+          sleep 20
+          echo "Done"
