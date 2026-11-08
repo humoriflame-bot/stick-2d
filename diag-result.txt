@@ -1,0 +1,3 @@
+secret_present: NO
+api_private_repo_status: 401
+api_private_file_status: 401
