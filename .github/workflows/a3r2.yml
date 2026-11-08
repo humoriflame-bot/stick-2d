@@ -74,4 +74,4 @@ jobs:
           echo "family=${{ inputs.family }} shard=${{ matrix.shard }} runner=$RUNNER_OS finished=$(date -u +%FT%TZ)" > results/STATUS.txt
           git add results
           git commit -m "a3r2 ${{ inputs.family }} shard ${{ matrix.shard }} results" || echo "nothing to commit"
-          git push origin "$BR"
+          git push --force origin "$BR"
