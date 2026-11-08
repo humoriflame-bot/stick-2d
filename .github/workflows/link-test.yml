@@ -6,13 +6,13 @@ jobs:
     steps:
       - name: Clone private repo with secret
         env:
-          TOKEN: ${{ secrets.PRIVATE_TOKEN }}
+          TOKEN: ${{ secrets.PRIVATETOKEN }}
         run: |
           git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/humoriflame-bot/stick-animation.git" private-data
           echo "files cloned: $(find private-data -type f | wc -l)"
       - name: Push test branch back to private
         env:
-          TOKEN: ${{ secrets.PRIVATE_TOKEN }}
+          TOKEN: ${{ secrets.PRIVATETOKEN }}
         run: |
           cd private-data
           git config user.email "farm@test.local"
