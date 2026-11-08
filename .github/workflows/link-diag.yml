@@ -9,9 +9,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Diagnose secret and token reach (status codes only)
         env:
-          TOKEN: ${{ secrets.PRIVATE_TOKEN }}
+          TOKEN: ${{ secrets.PRIVATETOKEN }}
         run: |
           {
+            echo "checked_at: $(date -u +%FT%TZ)"
             if [ -z "$TOKEN" ]; then echo "secret_present: NO"; else echo "secret_present: YES"; fi
             code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/humoriflame-bot/stick-animation)
             echo "api_private_repo_status: $code"
