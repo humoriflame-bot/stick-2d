@@ -1,0 +1,133 @@
+name: Urdu Voice S01 (OmniVoice)
+
+# Public shell: ONLY this workflow lives here. Jobs + results live in the
+# private repo (cloned in-run with PRIVATETOKEN); results push back to a
+# per-batch branch urdu/<batch> in the private repo. Nothing private is
+# stored in this public repo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "batch id (jobs file e3urdu/jobs-<batch>.json in private repo)"
+        required: true
+        type: string
+
+jobs:
+  synth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Clone private repo (jobs) and ref branch (if any)
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.PRIVATETOKEN }}@github.com/humoriflame-bot/stick-animation.git" priv
+          git clone --depth 1 --branch "urdu/ref" "https://x-access-token:${{ secrets.PRIVATETOKEN }}@github.com/humoriflame-bot/stick-animation.git" privref || echo "no ref branch yet (expected for ref batch)"
+          cp "priv/e3urdu/jobs-${{ inputs.batch }}.json" jobs.json
+          ls -la privref/results/ 2>/dev/null || true
+      - name: Setup tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libsndfile1 > /dev/null 2>&1
+          python3 -m venv "$RUNNER_TEMP/vtools"
+          "$RUNNER_TEMP/vtools/bin/pip" install -q uv huggingface_hub
+          echo "$RUNNER_TEMP/vtools/bin" >> "$GITHUB_PATH"
+      - name: Install OmniVoice (sweep-proven route)
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HF_HUB_DISABLE_XET: "1"
+        run: |
+          set -e
+          V="$RUNNER_TEMP/vs-omnivoice"; mkdir -p "$V"
+          echo "V=$V" >> "$GITHUB_ENV"
+          timeout 300 git clone --depth 1 https://github.com/k2-fsa/OmniVoice "$V/ov"
+          uv venv --python 3.11 "$V/venv"
+          uv pip install --python "$V/venv/bin/python" torch torchaudio --index-url https://download.pytorch.org/whl/cpu 2>&1 | tail -2
+          uv pip install --python "$V/venv/bin/python" -e "$V/ov" soundfile numpy 2>&1 | tail -3
+          echo "install done"
+      - name: Synthesise batch
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HF_HUB_DISABLE_XET: "1"
+        run: |
+          set +e
+          mkdir -p out
+          cat > "$V/gen.py" <<'PY'
+          import json, os, time, traceback
+          import numpy as np, soundfile as sf, torch
+          jobs = json.load(open("jobs.json"))
+          mode = jobs["mode"]
+          outdir = "out"; os.makedirs(outdir, exist_ok=True)
+          log = open(os.path.join(outdir, "gen.log"), "a", buffering=1)
+          def say(*a):
+              print(*a, flush=True); print(*a, file=log, flush=True)
+          say("mode:", mode, "start:", time.strftime("%FT%TZ", time.gmtime()))
+          from omnivoice.models.omnivoice import OmniVoice
+          from omnivoice.utils.common import get_best_device
+          device = get_best_device()
+          say("device:", device)
+          t0 = time.time()
+          model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device, dtype=torch.float16)
+          sr = int(model.sampling_rate)
+          say(f"model loaded in {time.time()-t0:.0f}s, sr={sr}")
+          results = {"mode": mode, "sr": sr, "items": []}
+          def gen_one(text, **kw):
+              audios = model.generate(text=text, language="Urdu", **kw)
+              return np.asarray(audios[0], dtype=np.float32)
+          if mode == "ref":
+              torch.manual_seed(42)
+              t1 = time.time()
+              wav = gen_one(jobs["ref_text"])
+              sf.write(os.path.join(outdir, "ref.wav"), wav, sr, subtype="PCM_16")
+              dur = len(wav) / sr
+              say(f"ref.wav {dur:.2f}s in {time.time()-t1:.0f}s")
+              results["items"].append({"kind": "ref", "dur": round(dur, 3), "words": len(jobs["ref_text"].split())})
+              for s in jobs["samples"]:
+                  t1 = time.time()
+                  try:
+                      wav = gen_one(s["text"])
+                      fn = f"sample-{s['index']:02d}.wav"
+                      sf.write(os.path.join(outdir, fn), wav, sr, subtype="PCM_16")
+                      dur = len(wav) / sr
+                      say(f"sample {s['index']}: {dur:.2f}s (visual {s['visual_dur']}) in {time.time()-t1:.0f}s")
+                      results["items"].append({"kind": "sample", "index": s["index"], "dur": round(dur, 3), "visual_dur": s["visual_dur"], "words": len(s["text"].split()), "file": fn})
+                  except Exception as e:
+                      say(f"sample {s['index']} ERROR", repr(e)); traceback.print_exc(file=log)
+                  json.dump(results, open(os.path.join(outdir, "durations.json"), "w"), indent=1)
+          else:
+              ref_path = os.path.join("privref", "results", "ref.wav")
+              say("ref:", ref_path, os.path.exists(ref_path))
+              prompt = model.create_voice_clone_prompt(ref_audio=ref_path, ref_text=jobs["ref_text"])
+              say("clone prompt ready")
+              for s in jobs["segments"]:
+                  t1 = time.time()
+                  try:
+                      wav = gen_one(s["text"], voice_clone_prompt=prompt)
+                      fn = f"seg-{s['index']:02d}.wav"
+                      sf.write(os.path.join(outdir, fn), wav, sr, subtype="PCM_16")
+                      dur = len(wav) / sr
+                      say(f"seg {s['index']}: {dur:.2f}s (visual {s['visual_dur']}) in {time.time()-t1:.0f}s")
+                      results["items"].append({"kind": "seg", "index": s["index"], "dur": round(dur, 3), "visual_dur": s["visual_dur"], "words": len(s["text"].split()), "file": fn, "ok": True})
+                  except Exception as e:
+                      say(f"seg {s['index']} ERROR", repr(e)); traceback.print_exc(file=log)
+                      results["items"].append({"kind": "seg", "index": s["index"], "ok": False, "error": repr(e)})
+                  json.dump(results, open(os.path.join(outdir, "durations.json"), "w"), indent=1)
+          say("ALL DONE", time.strftime("%FT%TZ", time.gmtime()))
+          PY
+          timeout 18000 "$V/venv/bin/python" "$V/gen.py" 2>&1 | tee gen-console.log
+          echo "gen exit: $?"
+          cp gen-console.log out/ 2>/dev/null || true
+          ls -la out/
+      - name: Push results to private branch
+        if: always()
+        working-directory: priv
+        run: |
+          git config user.name "urdu-farm"
+          git config user.email "urdu-farm@localhost"
+          BR="urdu/${{ inputs.batch }}"
+          git checkout -B "$BR"
+          rm -rf results
+          mkdir -p results
+          cp -r ../out/. results/ 2>/dev/null || true
+          ls results | head -30
+          git add results
+          git commit -m "urdu results ${{ inputs.batch }}" || echo "nothing to commit"
+          git push origin "$BR" --force
