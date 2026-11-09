@@ -100,7 +100,7 @@ jobs:
               for s in jobs["segments"]:
                   t1 = time.time()
                   try:
-                      wav = gen_one(s["text"], voice_clone_prompt=prompt)
+                      wav = gen_one(s["text"], voice_clone_prompt=prompt, duration=float(s["visual_dur"]))
                       fn = f"seg-{s['index']:02d}.wav"
                       sf.write(os.path.join(outdir, fn), wav, sr, subtype="PCM_16")
                       dur = len(wav) / sr
