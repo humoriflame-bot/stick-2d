@@ -93,14 +93,20 @@ jobs:
                       say(f"sample {s['index']} ERROR", repr(e)); traceback.print_exc(file=log)
                   json.dump(results, open(os.path.join(outdir, "durations.json"), "w"), indent=1)
           else:
-              ref_path = os.path.join("privref", "results", "ref.wav")
-              say("ref:", ref_path, os.path.exists(ref_path))
-              prompt = model.create_voice_clone_prompt(ref_audio=ref_path, ref_text=jobs["ref_text"])
-              say("clone prompt ready")
+              prompt = None
+              if mode == "segs":
+                  ref_path = os.path.join("privref", "results", "ref.wav")
+                  say("ref:", ref_path, os.path.exists(ref_path))
+                  prompt = model.create_voice_clone_prompt(ref_audio=ref_path, ref_text=jobs["ref_text"])
+                  say("clone prompt ready")
               for s in jobs["segments"]:
                   t1 = time.time()
                   try:
-                      wav = gen_one(s["text"], voice_clone_prompt=prompt, duration=float(s["visual_dur"]))
+                      if mode == "segsauto":
+                          torch.manual_seed(1234)
+                          wav = gen_one(s["text"], duration=float(s["visual_dur"]))
+                      else:
+                          wav = gen_one(s["text"], voice_clone_prompt=prompt, duration=float(s["visual_dur"]))
                       fn = f"seg-{s['index']:02d}.wav"
                       sf.write(os.path.join(outdir, fn), wav, sr, subtype="PCM_16")
                       dur = len(wav) / sr
